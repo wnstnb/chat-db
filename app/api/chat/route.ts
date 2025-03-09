@@ -20,6 +20,65 @@ export async function POST(req: Request) {
     // Create a buffer to accumulate the assistant's response
     let assistantResponseBuffer = '';
     
+    // Flag to track if we've persisted the conversation
+    let hasPersistedConversation = false;
+    
+    // Function to persist the conversation
+    const persistConversation = async () => {
+      if (hasPersistedConversation) return;
+      hasPersistedConversation = true;
+      
+      try {
+        console.log('Persisting conversation');
+        const endTime = Date.now();
+        const executionTime = endTime - startTime;
+        
+        // Get the last user message for generating a title
+        const lastUserMessage = messages.find((m: any) => m.role === 'user')?.content || '';
+        const title = lastUserMessage.length > 50 
+          ? lastUserMessage.substring(0, 50) + '...' 
+          : lastUserMessage;
+        
+        // Use the accumulated buffer for the assistant's message
+        const assistantMessage = assistantResponseBuffer || 'Response processed';
+        console.log('Assistant message length for persistence:', assistantMessage.length);
+        
+        // Add the assistant's response to the messages
+        const updatedMessages = [
+          ...messages, 
+          { role: 'assistant', content: assistantMessage }
+        ];
+        
+        // Save or update the conversation
+        let conversationId: number | null = null;
+        
+        if (threadId) {
+          // Update existing conversation
+          await updateConversation(parseInt(threadId), title, updatedMessages);
+          conversationId = parseInt(threadId);
+        } else {
+          // Create new conversation
+          conversationId = await saveConversation(title, updatedMessages);
+        }
+        
+        // Log the chat call
+        if (conversationId) {
+          await logChatCall(
+            conversationId,
+            0, // We don't have token counts from the API
+            0,
+            0,
+            'gpt-4o',
+            'READ', // Default to READ, we could determine this from the messages
+            executionTime,
+            'success'
+          );
+        }
+      } catch (error) {
+        console.error('Error persisting conversation:', error);
+      }
+    };
+    
     // Stream the response
     const result = streamText({
       model: openai("gpt-4o"),
@@ -200,57 +259,54 @@ export async function POST(req: Request) {
     // Process the response
     const response = result.toDataStreamResponse();
     
-    // Handle conversation persistence after the response is complete
-    setTimeout(async () => {
+    // Create a clone of the response to read the full content
+    const clonedResponse = response.clone();
+    
+    // Read the full response in the background
+    (async () => {
       try {
-        const endTime = Date.now();
-        const executionTime = endTime - startTime;
-        
-        // Get the last user message for generating a title
-        const lastUserMessage = messages.find((m: any) => m.role === 'user')?.content || '';
-        const title = lastUserMessage.length > 50 
-          ? lastUserMessage.substring(0, 50) + '...' 
-          : lastUserMessage;
-        
-        // Use the accumulated buffer for the assistant's message
-        // If the buffer is empty, try to get the response from result.toString()
-        const assistantMessage = assistantResponseBuffer || result.toString() || 'Response processed';
-        
-        // Add the assistant's response to the messages
-        const updatedMessages = [
-          ...messages, 
-          { role: 'assistant', content: assistantMessage }
-        ];
-        
-        // Save or update the conversation
-        let conversationId: number | null = null;
-        
-        if (threadId) {
-          // Update existing conversation
-          await updateConversation(parseInt(threadId), title, updatedMessages);
-          conversationId = parseInt(threadId);
-        } else {
-          // Create new conversation
-          conversationId = await saveConversation(title, updatedMessages);
+        // Wait for the full response to be available
+        const reader = clonedResponse.body?.getReader();
+        if (!reader) {
+          console.error('No reader available for response');
+          return;
         }
         
-        // Log the chat call
-        if (conversationId) {
-          await logChatCall(
-            conversationId,
-            0, // We don't have token counts from the API
-            0,
-            0,
-            'gpt-4o',
-            'READ', // Default to READ, we could determine this from the messages
-            executionTime,
-            'success'
-          );
+        let fullResponseText = '';
+        
+        // Read the stream chunk by chunk
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          // Convert the chunk to text and append to the full response
+          const chunkText = new TextDecoder().decode(value);
+          fullResponseText += chunkText;
+        }
+        
+        console.log('Full response read, length:', fullResponseText.length);
+        
+        // If our buffer is empty, use the full response text
+        if (!assistantResponseBuffer) {
+          assistantResponseBuffer = fullResponseText;
+        }
+        
+        // Persist the conversation if we haven't already
+        if (!hasPersistedConversation) {
+          await persistConversation();
         }
       } catch (error) {
-        console.error('Error persisting conversation:', error);
+        console.error('Error reading full response:', error);
       }
-    }, 100);
+    })();
+    
+    // Set up a timeout as a fallback, but make it much longer
+    setTimeout(() => {
+      if (!hasPersistedConversation) {
+        console.log('Persisting conversation after timeout');
+        persistConversation();
+      }
+    }, 10000); // 10 seconds should be plenty of time for most responses
 
     return response;
   } catch (error) {
