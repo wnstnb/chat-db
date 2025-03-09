@@ -20,6 +20,9 @@ export async function POST(req: Request) {
     // Create a buffer to accumulate the assistant's response
     let assistantResponseBuffer = '';
     
+    // Buffer to store tool outputs separately
+    let toolOutputsBuffer = '';
+    
     // Flag to track if we've persisted the conversation
     let hasPersistedConversation = false;
     
@@ -114,7 +117,8 @@ export async function POST(req: Request) {
               
               if (result.error) {
                 const errorMessage = `Error executing query: ${result.error.message || 'Unknown error'}`;
-                assistantResponseBuffer += `\n${errorMessage}\n`;
+                // Add to tool outputs buffer instead of assistant response buffer
+                toolOutputsBuffer += `\n${errorMessage}\n`;
                 return errorMessage;
               }
               
@@ -151,7 +155,8 @@ export async function POST(req: Request) {
                 
                 // Return a formatted string with the count result
                 const countMessage = `The query returned a count of ${countValue !== null ? countValue : 'unknown'}. Here is the raw result: ${JSON.stringify(result.data)}`;
-                assistantResponseBuffer += `\n${countMessage}\n`;
+                // Add to tool outputs buffer instead of assistant response buffer
+                toolOutputsBuffer += `\n${countMessage}\n`;
                 return countMessage;
               }
               
@@ -174,29 +179,34 @@ export async function POST(req: Request) {
                   });
                   
                   const tableMessage = `Here are the query results:\n\n${markdownTable}`;
-                  assistantResponseBuffer += `\n${tableMessage}\n`;
+                  // Add to tool outputs buffer instead of assistant response buffer
+                  toolOutputsBuffer += `\n${tableMessage}\n`;
                   return tableMessage;
                 } catch (formatError) {
                   console.error('Error formatting table:', formatError);
                   // Fallback to JSON if table formatting fails
                   const jsonMessage = `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
-                  assistantResponseBuffer += `\n${jsonMessage}\n`;
+                  // Add to tool outputs buffer instead of assistant response buffer
+                  toolOutputsBuffer += `\n${jsonMessage}\n`;
                   return jsonMessage;
                 }
               } else if (Array.isArray(result.data) && result.data.length === 0) {
                 const emptyMessage = `The query returned no results.`;
-                assistantResponseBuffer += `\n${emptyMessage}\n`;
+                // Add to tool outputs buffer instead of assistant response buffer
+                toolOutputsBuffer += `\n${emptyMessage}\n`;
                 return emptyMessage;
               } else {
                 // For other types of results, return as JSON
                 const jsonMessage = `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
-                assistantResponseBuffer += `\n${jsonMessage}\n`;
+                // Add to tool outputs buffer instead of assistant response buffer
+                toolOutputsBuffer += `\n${jsonMessage}\n`;
                 return jsonMessage;
               }
             } catch (error: any) {
               console.error('Error executing read query:', error);
               const errorMessage = `Error executing query: ${error.message || 'Unknown error'}`;
-              assistantResponseBuffer += `\n${errorMessage}\n`;
+              // Add to tool outputs buffer instead of assistant response buffer
+              toolOutputsBuffer += `\n${errorMessage}\n`;
               return errorMessage;
             }
           }
@@ -223,7 +233,8 @@ export async function POST(req: Request) {
               // Only execute if confirmed
               if (!confirmed) {
                 const confirmMessage = `Write operation requires confirmation. Please confirm to execute this SQL: ${sql}`;
-                assistantResponseBuffer += `\n${confirmMessage}\n`;
+                // Add to tool outputs buffer instead of assistant response buffer
+                toolOutputsBuffer += `\n${confirmMessage}\n`;
                 return confirmMessage;
               }
               
@@ -238,17 +249,20 @@ export async function POST(req: Request) {
               
               if (result.error) {
                 const errorMessage = `Error executing write query: ${result.error.message || 'Unknown error'}`;
-                assistantResponseBuffer += `\n${errorMessage}\n`;
+                // Add to tool outputs buffer instead of assistant response buffer
+                toolOutputsBuffer += `\n${errorMessage}\n`;
                 return errorMessage;
               }
               
               const successMessage = `Write operation (${queryType.toUpperCase()}) completed successfully.`;
-              assistantResponseBuffer += `\n${successMessage}\n`;
+              // Add to tool outputs buffer instead of assistant response buffer
+              toolOutputsBuffer += `\n${successMessage}\n`;
               return successMessage;
             } catch (error: any) {
               console.error('Error executing write query:', error);
               const errorMessage = `Error executing write query: ${error.message || 'Unknown error'}`;
-              assistantResponseBuffer += `\n${errorMessage}\n`;
+              // Add to tool outputs buffer instead of assistant response buffer
+              toolOutputsBuffer += `\n${errorMessage}\n`;
               return errorMessage;
             }
           }
@@ -286,10 +300,17 @@ export async function POST(req: Request) {
         
         console.log('Full response read, length:', fullResponseText.length);
         
-        // If our buffer is empty, use the full response text
-        if (!assistantResponseBuffer) {
+        // Now merge the model's response with any tool outputs
+        if (toolOutputsBuffer) {
+          console.log('Tool outputs found, length:', toolOutputsBuffer.length);
+          // Use the model's response as the primary content, and append tool outputs if they exist
+          assistantResponseBuffer = fullResponseText + "\n\n--- Tool Outputs ---\n\n" + toolOutputsBuffer;
+        } else {
+          // No tool outputs, just use the full response
           assistantResponseBuffer = fullResponseText;
         }
+        
+        console.log('Final response length:', assistantResponseBuffer.length);
         
         // Persist the conversation if we haven't already
         if (!hasPersistedConversation) {
@@ -297,6 +318,17 @@ export async function POST(req: Request) {
         }
       } catch (error) {
         console.error('Error reading full response:', error);
+        
+        // If there was an error reading the full response, but we have tool outputs,
+        // use those as a fallback
+        if (toolOutputsBuffer && !assistantResponseBuffer) {
+          assistantResponseBuffer = toolOutputsBuffer;
+        }
+        
+        // Persist the conversation if we haven't already
+        if (!hasPersistedConversation) {
+          await persistConversation();
+        }
       }
     })();
     
