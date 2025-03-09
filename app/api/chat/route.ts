@@ -17,6 +17,9 @@ export async function POST(req: Request) {
   };
 
   try {
+    // Create a buffer to accumulate the assistant's response
+    let assistantResponseBuffer = '';
+    
     // Stream the response
     const result = streamText({
       model: openai("gpt-4o"),
@@ -51,7 +54,9 @@ export async function POST(req: Request) {
               console.log('Read query result:', result);
               
               if (result.error) {
-                return `Error executing query: ${result.error.message || 'Unknown error'}`;
+                const errorMessage = `Error executing query: ${result.error.message || 'Unknown error'}`;
+                assistantResponseBuffer += `\n${errorMessage}\n`;
+                return errorMessage;
               }
               
               // Check if this is a COUNT query
@@ -86,7 +91,9 @@ export async function POST(req: Request) {
                 }
                 
                 // Return a formatted string with the count result
-                return `The query returned a count of ${countValue !== null ? countValue : 'unknown'}. Here is the raw result: ${JSON.stringify(result.data)}`;
+                const countMessage = `The query returned a count of ${countValue !== null ? countValue : 'unknown'}. Here is the raw result: ${JSON.stringify(result.data)}`;
+                assistantResponseBuffer += `\n${countMessage}\n`;
+                return countMessage;
               }
               
               // For regular table queries, format as a markdown table
@@ -107,21 +114,31 @@ export async function POST(req: Request) {
                     }).join(' | ') + ' |\n';
                   });
                   
-                  return `Here are the query results:\n\n${markdownTable}`;
+                  const tableMessage = `Here are the query results:\n\n${markdownTable}`;
+                  assistantResponseBuffer += `\n${tableMessage}\n`;
+                  return tableMessage;
                 } catch (formatError) {
                   console.error('Error formatting table:', formatError);
                   // Fallback to JSON if table formatting fails
-                  return `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
+                  const jsonMessage = `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
+                  assistantResponseBuffer += `\n${jsonMessage}\n`;
+                  return jsonMessage;
                 }
               } else if (Array.isArray(result.data) && result.data.length === 0) {
-                return `The query returned no results.`;
+                const emptyMessage = `The query returned no results.`;
+                assistantResponseBuffer += `\n${emptyMessage}\n`;
+                return emptyMessage;
               } else {
                 // For other types of results, return as JSON
-                return `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
+                const jsonMessage = `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
+                assistantResponseBuffer += `\n${jsonMessage}\n`;
+                return jsonMessage;
               }
             } catch (error: any) {
               console.error('Error executing read query:', error);
-              return `Error executing query: ${error.message || 'Unknown error'}`;
+              const errorMessage = `Error executing query: ${error.message || 'Unknown error'}`;
+              assistantResponseBuffer += `\n${errorMessage}\n`;
+              return errorMessage;
             }
           }
         },
@@ -146,7 +163,9 @@ export async function POST(req: Request) {
             try {
               // Only execute if confirmed
               if (!confirmed) {
-                return `Write operation requires confirmation. Please confirm to execute this SQL: ${sql}`;
+                const confirmMessage = `Write operation requires confirmation. Please confirm to execute this SQL: ${sql}`;
+                assistantResponseBuffer += `\n${confirmMessage}\n`;
+                return confirmMessage;
               }
               
               // Validate that this is a write query
@@ -159,13 +178,19 @@ export async function POST(req: Request) {
               console.log('Write query result:', result);
               
               if (result.error) {
-                return `Error executing write query: ${result.error.message || 'Unknown error'}`;
+                const errorMessage = `Error executing write query: ${result.error.message || 'Unknown error'}`;
+                assistantResponseBuffer += `\n${errorMessage}\n`;
+                return errorMessage;
               }
               
-              return `Write operation (${queryType.toUpperCase()}) completed successfully.`;
+              const successMessage = `Write operation (${queryType.toUpperCase()}) completed successfully.`;
+              assistantResponseBuffer += `\n${successMessage}\n`;
+              return successMessage;
             } catch (error: any) {
               console.error('Error executing write query:', error);
-              return `Error executing write query: ${error.message || 'Unknown error'}`;
+              const errorMessage = `Error executing write query: ${error.message || 'Unknown error'}`;
+              assistantResponseBuffer += `\n${errorMessage}\n`;
+              return errorMessage;
             }
           }
         }
@@ -187,9 +212,9 @@ export async function POST(req: Request) {
           ? lastUserMessage.substring(0, 50) + '...' 
           : lastUserMessage;
         
-        // Get the last assistant message for saving in the conversation
-        // This is a best-effort approach since we can't get the exact response
-        const assistantMessage = result.toString() || 'Response processed';
+        // Use the accumulated buffer for the assistant's message
+        // If the buffer is empty, try to get the response from result.toString()
+        const assistantMessage = assistantResponseBuffer || result.toString() || 'Response processed';
         
         // Add the assistant's response to the messages
         const updatedMessages = [
