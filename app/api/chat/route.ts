@@ -303,8 +303,15 @@ export async function POST(req: Request) {
         // Now merge the model's response with any tool outputs
         if (toolOutputsBuffer) {
           console.log('Tool outputs found, length:', toolOutputsBuffer.length);
+          console.log('Tool outputs preview:', toolOutputsBuffer.substring(0, 100) + '...');
+          console.log('Full response preview:', fullResponseText.substring(0, 100) + '...');
+          
           // Use the model's response as the primary content, and append tool outputs if they exist
           assistantResponseBuffer = fullResponseText + "\n\n--- Tool Outputs ---\n\n" + toolOutputsBuffer;
+          
+          // Log the first and last 100 characters of the merged response
+          console.log('Merged response preview (first 100 chars):', assistantResponseBuffer.substring(0, 100) + '...');
+          console.log('Merged response preview (last 100 chars):', '...' + assistantResponseBuffer.substring(assistantResponseBuffer.length - 100));
         } else {
           // No tool outputs, just use the full response
           assistantResponseBuffer = fullResponseText;

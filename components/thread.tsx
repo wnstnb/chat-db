@@ -17,12 +17,18 @@ import {
   SendHorizontalIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useEffect } from "react";
 
 import { Button } from "@/components/ui/button";
 import { MarkdownText } from "@/components/markdown-text";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 
 export const Thread: FC = () => {
+  // Log when the Thread component renders
+  useEffect(() => {
+    console.log("Thread component rendered");
+  });
+  
   return (
     <ThreadPrimitive.Root
       className="bg-background box-border flex h-full flex-col overflow-hidden"
@@ -205,10 +211,28 @@ const EditComposer: FC = () => {
 };
 
 const AssistantMessage: FC = () => {
+  // Log when the AssistantMessage component renders
+  useEffect(() => {
+    console.log("AssistantMessage component rendered");
+    
+    // Try to access the message content for debugging
+    try {
+      const messageElements = document.querySelectorAll('.text-foreground.max-w-\\[calc\\(var\\(--thread-max-width\\)\\*0\\.8\\)\\]');
+      if (messageElements.length > 0) {
+        const lastMessage = messageElements[messageElements.length - 1];
+        console.log("Message content length:", lastMessage.textContent?.length || 0);
+      }
+    } catch (error) {
+      console.error("Error accessing message content:", error);
+    }
+  });
+  
   return (
     <MessagePrimitive.Root className="grid grid-cols-[auto_auto_1fr] grid-rows-[auto_1fr] relative w-full max-w-[var(--thread-max-width)] py-4">
       <div className="text-foreground max-w-[calc(var(--thread-max-width)*0.8)] break-words leading-7 col-span-2 col-start-2 row-start-1 my-1.5">
-        <MessagePrimitive.Content components={{ Text: MarkdownText }} />
+        <MessagePrimitive.Content 
+          components={{ Text: MarkdownText }} 
+        />
       </div>
 
       <AssistantActionBar />
