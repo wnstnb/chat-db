@@ -51,13 +51,77 @@ export async function POST(req: Request) {
               console.log('Read query result:', result);
               
               if (result.error) {
-                return { error: result.error.message || 'Error executing query' };
+                return `Error executing query: ${result.error.message || 'Unknown error'}`;
               }
               
-              return result.data;
+              // Check if this is a COUNT query
+              const isCountQuery = sql.toLowerCase().includes('count(') || sql.toLowerCase().includes('count (');
+              
+              if (isCountQuery) {
+                // Extract count value from the result
+                let countValue = null;
+                
+                if (Array.isArray(result.data) && result.data.length > 0) {
+                  // Try to find count value in the first row
+                  const firstRow = result.data[0];
+                  
+                  // Look for common count column names
+                  const countKeys = ['count', 'count(*)', 'entity_count', 'total'];
+                  for (const key of Object.keys(firstRow)) {
+                    if (countKeys.includes(key.toLowerCase()) || key.toLowerCase().includes('count')) {
+                      countValue = firstRow[key];
+                      break;
+                    }
+                  }
+                  
+                  // If no specific count column found, use the first numeric value
+                  if (countValue === null) {
+                    for (const key of Object.keys(firstRow)) {
+                      if (typeof firstRow[key] === 'number') {
+                        countValue = firstRow[key];
+                        break;
+                      }
+                    }
+                  }
+                }
+                
+                // Return a formatted string with the count result
+                return `The query returned a count of ${countValue !== null ? countValue : 'unknown'}. Here is the raw result: ${JSON.stringify(result.data)}`;
+              }
+              
+              // For regular table queries, format as a markdown table
+              if (Array.isArray(result.data) && result.data.length > 0) {
+                try {
+                  // Get column headers from the first row
+                  const headers = Object.keys(result.data[0]);
+                  
+                  // Create markdown table header
+                  let markdownTable = '| ' + headers.join(' | ') + ' |\n';
+                  markdownTable += '| ' + headers.map(() => '---').join(' | ') + ' |\n';
+                  
+                  // Add rows to the table
+                  result.data.forEach((row: Record<string, any>) => {
+                    markdownTable += '| ' + headers.map(header => {
+                      const value = row[header];
+                      return value !== null && value !== undefined ? String(value) : '';
+                    }).join(' | ') + ' |\n';
+                  });
+                  
+                  return `Here are the query results:\n\n${markdownTable}`;
+                } catch (formatError) {
+                  console.error('Error formatting table:', formatError);
+                  // Fallback to JSON if table formatting fails
+                  return `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
+                }
+              } else if (Array.isArray(result.data) && result.data.length === 0) {
+                return `The query returned no results.`;
+              } else {
+                // For other types of results, return as JSON
+                return `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
+              }
             } catch (error: any) {
               console.error('Error executing read query:', error);
-              return { error: error.message || 'Error executing query' };
+              return `Error executing query: ${error.message || 'Unknown error'}`;
             }
           }
         },
@@ -82,10 +146,7 @@ export async function POST(req: Request) {
             try {
               // Only execute if confirmed
               if (!confirmed) {
-                return { 
-                  message: 'Write operation requires confirmation. Please confirm to execute.',
-                  sql
-                };
+                return `Write operation requires confirmation. Please confirm to execute this SQL: ${sql}`;
               }
               
               // Validate that this is a write query
@@ -98,13 +159,13 @@ export async function POST(req: Request) {
               console.log('Write query result:', result);
               
               if (result.error) {
-                return { error: result.error.message || 'Error executing query' };
+                return `Error executing write query: ${result.error.message || 'Unknown error'}`;
               }
               
-              return result.data || { success: true, message: 'Write operation completed successfully' };
+              return `Write operation (${queryType.toUpperCase()}) completed successfully.`;
             } catch (error: any) {
               console.error('Error executing write query:', error);
-              return { error: error.message || 'Error executing query' };
+              return `Error executing write query: ${error.message || 'Unknown error'}`;
             }
           }
         }
