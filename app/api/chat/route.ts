@@ -20,6 +20,9 @@ export async function POST(req: Request) {
     // Create a buffer to accumulate the assistant's response
     let assistantResponseBuffer = '';
     
+    // Variable to store the conversation ID
+    let conversationId: number | null = threadId ? parseInt(threadId) : null;
+    
     // Stream the response
     const result = streamText({
       model: openai("gpt-4o"),
@@ -178,6 +181,9 @@ export async function POST(req: Request) {
     // Process the response
     const response = result.toDataStreamResponse();
     
+    // Add custom headers to the response
+    response.headers.set('X-Needs-Complete-Message', 'true');
+    
     // Handle conversation persistence after the response is complete
     setTimeout(async () => {
       try {
@@ -202,8 +208,6 @@ export async function POST(req: Request) {
         ];
         
         // Save or update the conversation
-        let conversationId: number | null = null;
-        
         if (threadId) {
           // Update existing conversation
           await updateConversation(parseInt(threadId), title, updatedMessages);
@@ -226,10 +230,19 @@ export async function POST(req: Request) {
             'success'
           );
         }
+        
+        // Store the conversation ID in a global variable or cache
+        // so it can be accessed by the client
+        console.log('Conversation saved with ID:', conversationId);
       } catch (error) {
         console.error('Error persisting conversation:', error);
       }
     }, 1000); // Increased timeout to ensure the stream is complete
+
+    // Add the conversation ID to the response headers if it exists
+    if (conversationId) {
+      response.headers.set('X-Conversation-ID', conversationId.toString());
+    }
 
     return response;
   } catch (error) {
