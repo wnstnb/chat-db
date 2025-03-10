@@ -175,70 +175,64 @@ export async function POST(req: Request) {
             }
           }
         }
+      },
+      onFinish: async (completion) => {
+        // This callback is called when the stream is complete
+        // Now we have the full response, so we can save it to the database
+        try {
+          const endTime = Date.now();
+          const executionTime = endTime - startTime;
+          
+          // Get the last user message for generating a title
+          const lastUserMessage = messages.find((m: any) => m.role === 'user')?.content || '';
+          const title = lastUserMessage.length > 50 
+            ? lastUserMessage.substring(0, 50) + '...' 
+            : lastUserMessage;
+          
+          // Get the complete assistant's response
+          const assistantMessage = completion.toString();
+          console.log('Final assistant message length for persistence:', assistantMessage.length);
+          
+          // Add the assistant's response to the messages
+          const updatedMessages = [
+            ...messages, 
+            { role: 'assistant', content: assistantMessage }
+          ];
+          
+          // Save or update the conversation
+          if (threadId) {
+            // Update existing conversation
+            await updateConversation(parseInt(threadId), title, updatedMessages);
+            conversationId = parseInt(threadId);
+          } else {
+            // Create new conversation
+            conversationId = await saveConversation(title, updatedMessages);
+          }
+          
+          // Log the chat call
+          if (conversationId) {
+            await logChatCall(
+              conversationId,
+              0, // We don't have token counts from the API
+              0,
+              0,
+              'gpt-4o',
+              'READ', // Default to READ, we could determine this from the messages
+              executionTime,
+              'success'
+            );
+          }
+          
+          console.log('Conversation saved with ID:', conversationId);
+        } catch (error) {
+          console.error('Error persisting conversation:', error);
+        }
       }
     });
 
     // Process the response
     const response = result.toDataStreamResponse();
     
-    // Add custom headers to the response
-    response.headers.set('X-Needs-Complete-Message', 'true');
-    
-    // Handle conversation persistence after the response is complete
-    setTimeout(async () => {
-      try {
-        const endTime = Date.now();
-        const executionTime = endTime - startTime;
-        
-        // Get the last user message for generating a title
-        const lastUserMessage = messages.find((m: any) => m.role === 'user')?.content || '';
-        const title = lastUserMessage.length > 50 
-          ? lastUserMessage.substring(0, 50) + '...' 
-          : lastUserMessage;
-        
-        // Get the assistant's response from the messages
-        // This is a best-effort approach since we can't get the exact response
-        const assistantMessage = result.toString() || 'Response processed';
-        console.log('Final assistant message length for persistence:', assistantMessage.length);
-        
-        // Add the assistant's response to the messages
-        const updatedMessages = [
-          ...messages, 
-          { role: 'assistant', content: assistantMessage }
-        ];
-        
-        // Save or update the conversation
-        if (threadId) {
-          // Update existing conversation
-          await updateConversation(parseInt(threadId), title, updatedMessages);
-          conversationId = parseInt(threadId);
-        } else {
-          // Create new conversation
-          conversationId = await saveConversation(title, updatedMessages);
-        }
-        
-        // Log the chat call
-        if (conversationId) {
-          await logChatCall(
-            conversationId,
-            0, // We don't have token counts from the API
-            0,
-            0,
-            'gpt-4o',
-            'READ', // Default to READ, we could determine this from the messages
-            executionTime,
-            'success'
-          );
-        }
-        
-        // Store the conversation ID in a global variable or cache
-        // so it can be accessed by the client
-        console.log('Conversation saved with ID:', conversationId);
-      } catch (error) {
-        console.error('Error persisting conversation:', error);
-      }
-    }, 1000); // Increased timeout to ensure the stream is complete
-
     // Add the conversation ID to the response headers if it exists
     if (conversationId) {
       response.headers.set('X-Conversation-ID', conversationId.toString());

@@ -21,12 +21,8 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { MarkdownText } from "@/components/markdown-text";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
-import { useCompleteMessage } from "@/lib/use-complete-message";
 
 export const Thread: FC = () => {
-  // Use our custom hook to handle fetching complete messages after SSE completion
-  useCompleteMessage();
-  
   return (
     <ThreadPrimitive.Root
       className="bg-background box-border flex h-full flex-col overflow-hidden"
