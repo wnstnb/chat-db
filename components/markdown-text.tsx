@@ -19,7 +19,7 @@ const MarkdownTextImpl = () => {
   return (
     <MarkdownTextPrimitive
       remarkPlugins={[remarkGfm]}
-      className="aui-md"
+      className="aui-md prose prose-sm dark:prose-invert max-w-none"
       components={defaultComponents}
     />
   );
@@ -102,16 +102,18 @@ const defaultComponents = memoizeMarkdownComponents({
     <hr className={cn("my-5 border-b", className)} {...props} />
   ),
   table: ({ className, ...props }) => (
-    <table className={cn("my-5 w-full border-separate border-spacing-0 overflow-y-auto", className)} {...props} />
+    <div className="my-5 w-full overflow-x-auto rounded-lg border">
+      <table className={cn("w-full border-collapse", className)} {...props} />
+    </div>
   ),
   th: ({ className, ...props }) => (
-    <th className={cn("bg-muted px-4 py-2 text-left font-bold first:rounded-tl-lg last:rounded-tr-lg [&[align=center]]:text-center [&[align=right]]:text-right", className)} {...props} />
+    <th className={cn("bg-muted px-4 py-2 text-left font-bold [&[align=center]]:text-center [&[align=right]]:text-right", className)} {...props} />
   ),
   td: ({ className, ...props }) => (
-    <td className={cn("border-b border-l px-4 py-2 text-left last:border-r [&[align=center]]:text-center [&[align=right]]:text-right", className)} {...props} />
+    <td className={cn("border-t px-4 py-2 text-left [&[align=center]]:text-center [&[align=right]]:text-right", className)} {...props} />
   ),
   tr: ({ className, ...props }) => (
-    <tr className={cn("m-0 border-b p-0 first:border-t [&:last-child>td:first-child]:rounded-bl-lg [&:last-child>td:last-child]:rounded-br-lg", className)} {...props} />
+    <tr className={cn("m-0 p-0 even:bg-muted/50", className)} {...props} />
   ),
   sup: ({ className, ...props }) => (
     <sup className={cn("[&>a]:text-xs [&>a]:no-underline", className)} {...props} />

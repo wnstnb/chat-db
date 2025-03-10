@@ -23,6 +23,9 @@ export async function POST(req: Request) {
     // Variable to store the conversation ID
     let conversationId: number | null = threadId ? parseInt(threadId) : null;
     
+    // Track tool outputs to ensure they're included in the final response
+    let toolOutputs: string[] = [];
+    
     // Stream the response
     const result = streamText({
       model: openai("gpt-4o"),
@@ -57,7 +60,9 @@ export async function POST(req: Request) {
               console.log('Read query result:', result);
               
               if (result.error) {
-                return `Error executing query: ${result.error.message || 'Unknown error'}`;
+                const errorMessage = `Error executing query: ${result.error.message || 'Unknown error'}`;
+                toolOutputs.push(errorMessage);
+                return errorMessage;
               }
               
               // Check if this is a COUNT query
@@ -92,7 +97,9 @@ export async function POST(req: Request) {
                 }
                 
                 // Return a formatted string with the count result
-                return `The query returned a count of ${countValue !== null ? countValue : 'unknown'}. Here is the raw result: ${JSON.stringify(result.data)}`;
+                const countResult = `The query returned a count of ${countValue !== null ? countValue : 'unknown'}. Here is the raw result: ${JSON.stringify(result.data)}`;
+                toolOutputs.push(countResult);
+                return countResult;
               }
               
               // For regular table queries, format as a markdown table
@@ -113,21 +120,31 @@ export async function POST(req: Request) {
                     }).join(' | ') + ' |\n';
                   });
                   
-                  return `Here are the query results:\n\n${markdownTable}`;
+                  const tableResult = `Here are the query results:\n\n${markdownTable}`;
+                  toolOutputs.push(tableResult);
+                  return tableResult;
                 } catch (formatError) {
                   console.error('Error formatting table:', formatError);
                   // Fallback to JSON if table formatting fails
-                  return `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
+                  const jsonResult = `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
+                  toolOutputs.push(jsonResult);
+                  return jsonResult;
                 }
               } else if (Array.isArray(result.data) && result.data.length === 0) {
-                return `The query returned no results.`;
+                const noResultsMessage = `The query returned no results.`;
+                toolOutputs.push(noResultsMessage);
+                return noResultsMessage;
               } else {
                 // For other types of results, return as JSON
-                return `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
+                const jsonResult = `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
+                toolOutputs.push(jsonResult);
+                return jsonResult;
               }
             } catch (error: any) {
               console.error('Error executing read query:', error);
-              return `Error executing query: ${error.message || 'Unknown error'}`;
+              const errorMessage = `Error executing query: ${error.message || 'Unknown error'}`;
+              toolOutputs.push(errorMessage);
+              return errorMessage;
             }
           }
         },
@@ -152,26 +169,36 @@ export async function POST(req: Request) {
             try {
               // Only execute if confirmed
               if (!confirmed) {
-                return `Write operation requires confirmation. Please confirm to execute this SQL: ${sql}`;
+                const confirmMessage = `Write operation requires confirmation. Please confirm to execute this SQL: ${sql}`;
+                toolOutputs.push(confirmMessage);
+                return confirmMessage;
               }
               
               // Validate that this is a write query
               const queryType = sql.trim().toLowerCase().split(' ')[0];
               if (!['insert', 'update', 'delete'].includes(queryType)) {
-                return `Error: Only INSERT, UPDATE, and DELETE queries are allowed with this tool.`;
+                const errorMessage = `Error: Only INSERT, UPDATE, and DELETE queries are allowed with this tool.`;
+                toolOutputs.push(errorMessage);
+                return errorMessage;
               }
               
               const result = await executeWriteQuery(sql);
               console.log('Write query result:', result);
               
               if (result.error) {
-                return `Error executing write query: ${result.error.message || 'Unknown error'}`;
+                const errorMessage = `Error executing write query: ${result.error.message || 'Unknown error'}`;
+                toolOutputs.push(errorMessage);
+                return errorMessage;
               }
               
-              return `Write operation (${queryType.toUpperCase()}) completed successfully.`;
+              const successMessage = `Write operation (${queryType.toUpperCase()}) completed successfully.`;
+              toolOutputs.push(successMessage);
+              return successMessage;
             } catch (error: any) {
               console.error('Error executing write query:', error);
-              return `Error executing write query: ${error.message || 'Unknown error'}`;
+              const errorMessage = `Error executing write query: ${error.message || 'Unknown error'}`;
+              toolOutputs.push(errorMessage);
+              return errorMessage;
             }
           }
         }
@@ -190,7 +217,56 @@ export async function POST(req: Request) {
             : lastUserMessage;
           
           // Get the complete assistant's response
-          const assistantMessage = completion.toString();
+          let assistantMessage = completion.toString();
+          console.log('Initial assistant message length:', assistantMessage.length);
+          
+          // Check if any tool outputs are missing from the response
+          // If so, append them to ensure they're included
+          for (const toolOutput of toolOutputs) {
+            if (!assistantMessage.includes(toolOutput)) {
+              console.log('Tool output missing from response, appending it:', toolOutput.substring(0, 50) + '...');
+              
+              // If the message is very short, it might be just a greeting or acknowledgment
+              // In that case, append the tool output directly
+              if (assistantMessage.length < 50) {
+                assistantMessage += '\n\n' + toolOutput;
+              } else {
+                // Otherwise, try to find a good place to insert the tool output
+                // Look for phrases like "Here's the result" or "The query returned"
+                const insertPhrases = [
+                  'Here is the result',
+                  'Here are the results',
+                  'The query returned',
+                  'Here\'s what I found',
+                  'The results show',
+                  'Based on the query'
+                ];
+                
+                let inserted = false;
+                for (const phrase of insertPhrases) {
+                  const index = assistantMessage.indexOf(phrase);
+                  if (index !== -1) {
+                    // Insert after the phrase and the sentence it's in
+                    const endOfSentence = assistantMessage.indexOf('.', index);
+                    if (endOfSentence !== -1) {
+                      assistantMessage = 
+                        assistantMessage.substring(0, endOfSentence + 1) + 
+                        '\n\n' + toolOutput + '\n\n' + 
+                        assistantMessage.substring(endOfSentence + 1);
+                      inserted = true;
+                      break;
+                    }
+                  }
+                }
+                
+                // If we couldn't find a good place to insert, just append to the end
+                if (!inserted) {
+                  assistantMessage += '\n\n' + toolOutput;
+                }
+              }
+            }
+          }
+          
           console.log('Final assistant message length for persistence:', assistantMessage.length);
           
           // Add the assistant's response to the messages
