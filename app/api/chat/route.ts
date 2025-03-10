@@ -17,44 +17,14 @@ export async function POST(req: Request) {
   };
 
   try {
-    // Flag to track if we've persisted the conversation
-    let hasPersistedConversation = false;
-    
-    // Buffer to store the complete response
-    let fullResponseText = '';
-    
-    // Create a custom system prompt that instructs the model to include tool outputs in its response
-    const enhancedSystemPrompt = `${systemPrompt}
-
-# IMPORTANT: TOOL OUTPUT DISPLAY
-
-When you use a tool like 'query' or 'executeWrite', you MUST include the tool's output directly in your response.
-Format tool outputs clearly, for example:
-
-For SQL query results:
-1. Always include the actual data returned by the query
-2. Format tables using markdown
-3. For count queries, explicitly state the count value
-4. Never say you'll execute a query without showing the results
-
-Example:
-"Based on your question, I'll query the database to find the count of entities.
-
-\`\`\`sql
-SELECT COUNT(*) AS entity_count FROM entities;
-\`\`\`
-
-**Query Result:** The query returned a count of 14.
-
-This means there are 14 entities in the database."
-
-Remember: ALWAYS incorporate tool outputs directly into your response text.`;
+    // Create a buffer to accumulate the assistant's response
+    let assistantResponseBuffer = '';
     
     // Stream the response
     const result = streamText({
       model: openai("gpt-4o"),
       messages,
-      system: enhancedSystemPrompt,
+      system: systemPrompt,
       temperature: 0,
       maxTokens: 1500,
       // Set tool choice to auto to ensure the model uses tools when appropriate
@@ -77,16 +47,14 @@ Remember: ALWAYS incorporate tool outputs directly into your response text.`;
             try {
               // Validate that this is a read-only query
               if (!sql.trim().toLowerCase().startsWith('select')) {
-                const errorMessage = 'Only SELECT queries are allowed with this tool. For write operations, use the executeWrite tool.';
-                return `**Error:** ${errorMessage}`;
+                return "Error: Only SELECT queries are allowed with this tool. For write operations, use the executeWrite tool.";
               }
               
               const result = await executeReadQuery(sql);
               console.log('Read query result:', result);
               
               if (result.error) {
-                const errorMessage = `Error executing query: ${result.error.message || 'Unknown error'}`;
-                return `**Error:** ${errorMessage}`;
+                return `Error executing query: ${result.error.message || 'Unknown error'}`;
               }
               
               // Check if this is a COUNT query
@@ -120,8 +88,8 @@ Remember: ALWAYS incorporate tool outputs directly into your response text.`;
                   }
                 }
                 
-                // Format the count result
-                return `**Query Result:** The query returned a count of ${countValue !== null ? countValue : 'unknown'}.`;
+                // Return a formatted string with the count result
+                return `The query returned a count of ${countValue !== null ? countValue : 'unknown'}. Here is the raw result: ${JSON.stringify(result.data)}`;
               }
               
               // For regular table queries, format as a markdown table
@@ -142,23 +110,21 @@ Remember: ALWAYS incorporate tool outputs directly into your response text.`;
                     }).join(' | ') + ' |\n';
                   });
                   
-                  // Format the table result
-                  return `**Query Result:**\n\n${markdownTable}`;
+                  return `Here are the query results:\n\n${markdownTable}`;
                 } catch (formatError) {
                   console.error('Error formatting table:', formatError);
                   // Fallback to JSON if table formatting fails
-                  return `**Query Result:** ${JSON.stringify(result.data, null, 2)}`;
+                  return `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
                 }
               } else if (Array.isArray(result.data) && result.data.length === 0) {
-                return `**Query Result:** The query returned no results.`;
+                return `The query returned no results.`;
               } else {
                 // For other types of results, return as JSON
-                return `**Query Result:** ${JSON.stringify(result.data, null, 2)}`;
+                return `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
               }
             } catch (error: any) {
               console.error('Error executing read query:', error);
-              const errorMessage = `Error executing query: ${error.message || 'Unknown error'}`;
-              return `**Error:** ${errorMessage}`;
+              return `Error executing query: ${error.message || 'Unknown error'}`;
             }
           }
         },
@@ -183,149 +149,89 @@ Remember: ALWAYS incorporate tool outputs directly into your response text.`;
             try {
               // Only execute if confirmed
               if (!confirmed) {
-                return `**Write Operation:** Requires confirmation. Please confirm to execute this SQL: \`${sql}\``;
+                return `Write operation requires confirmation. Please confirm to execute this SQL: ${sql}`;
               }
               
               // Validate that this is a write query
               const queryType = sql.trim().toLowerCase().split(' ')[0];
               if (!['insert', 'update', 'delete'].includes(queryType)) {
-                const errorMessage = 'Only INSERT, UPDATE, and DELETE queries are allowed with this tool.';
-                return `**Error:** ${errorMessage}`;
+                return `Error: Only INSERT, UPDATE, and DELETE queries are allowed with this tool.`;
               }
               
               const result = await executeWriteQuery(sql);
               console.log('Write query result:', result);
               
               if (result.error) {
-                const errorMessage = `Error executing write query: ${result.error.message || 'Unknown error'}`;
-                return `**Error:** ${errorMessage}`;
+                return `Error executing write query: ${result.error.message || 'Unknown error'}`;
               }
               
-              return `**Write Operation:** ${queryType.toUpperCase()} completed successfully.`;
+              return `Write operation (${queryType.toUpperCase()}) completed successfully.`;
             } catch (error: any) {
               console.error('Error executing write query:', error);
-              const errorMessage = `Error executing write query: ${error.message || 'Unknown error'}`;
-              return `**Error:** ${errorMessage}`;
+              return `Error executing write query: ${error.message || 'Unknown error'}`;
             }
           }
         }
       }
     });
+
+    // Process the response
+    const response = result.toDataStreamResponse();
     
-    // Create a custom response that captures the full text
-    const { readable, writable } = new TransformStream();
-    const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
-    
-    // Create a writer to the writable stream
-    const writer = writable.getWriter();
-    
-    // Process the result and write to our custom stream
-    (async () => {
+    // Handle conversation persistence after the response is complete
+    setTimeout(async () => {
       try {
-        // Get the original response
-        const originalResponse = result.toDataStreamResponse();
+        const endTime = Date.now();
+        const executionTime = endTime - startTime;
         
-        // Read from the original response and write to our custom stream
-        const reader = originalResponse.body?.getReader();
-        if (!reader) {
-          console.error('No reader available for response');
-          return;
+        // Get the last user message for generating a title
+        const lastUserMessage = messages.find((m: any) => m.role === 'user')?.content || '';
+        const title = lastUserMessage.length > 50 
+          ? lastUserMessage.substring(0, 50) + '...' 
+          : lastUserMessage;
+        
+        // Get the assistant's response from the messages
+        // This is a best-effort approach since we can't get the exact response
+        const assistantMessage = result.toString() || 'Response processed';
+        console.log('Final assistant message length for persistence:', assistantMessage.length);
+        
+        // Add the assistant's response to the messages
+        const updatedMessages = [
+          ...messages, 
+          { role: 'assistant', content: assistantMessage }
+        ];
+        
+        // Save or update the conversation
+        let conversationId: number | null = null;
+        
+        if (threadId) {
+          // Update existing conversation
+          await updateConversation(parseInt(threadId), title, updatedMessages);
+          conversationId = parseInt(threadId);
+        } else {
+          // Create new conversation
+          conversationId = await saveConversation(title, updatedMessages);
         }
         
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          
-          // Decode the chunk to text and append to our buffer
-          const chunkText = decoder.decode(value, { stream: true });
-          fullResponseText += chunkText;
-          
-          // Write the chunk to our custom stream
-          await writer.write(value);
-        }
-        
-        // Finalize the decoding
-        const finalChunk = decoder.decode();
-        if (finalChunk) {
-          fullResponseText += finalChunk;
-        }
-        
-        // Close the writer
-        await writer.close();
-        
-        console.log('Full response accumulated, length:', fullResponseText.length);
-        
-        // Persist the conversation
-        if (!hasPersistedConversation) {
-          hasPersistedConversation = true;
-          
-          console.log('Persisting conversation');
-          const endTime = Date.now();
-          const executionTime = endTime - startTime;
-          
-          // Get the last user message for generating a title
-          const lastUserMessage = messages.find((m: any) => m.role === 'user')?.content || '';
-          const title = lastUserMessage.length > 50 
-            ? lastUserMessage.substring(0, 50) + '...' 
-            : lastUserMessage;
-          
-          // Use the accumulated text for the assistant's message
-          const assistantMessage = fullResponseText || 'Response processed';
-          console.log('Assistant message length for persistence:', assistantMessage.length);
-          
-          // Add the assistant's response to the messages
-          const updatedMessages = [
-            ...messages, 
-            { role: 'assistant', content: assistantMessage }
-          ];
-          
-          // Save or update the conversation
-          let conversationId: number | null = null;
-          
-          if (threadId) {
-            // Update existing conversation
-            await updateConversation(parseInt(threadId), title, updatedMessages);
-            conversationId = parseInt(threadId);
-          } else {
-            // Create new conversation
-            conversationId = await saveConversation(title, updatedMessages);
-          }
-          
-          // Log the chat call
-          if (conversationId) {
-            await logChatCall(
-              conversationId,
-              0, // We don't have token counts from the API
-              0,
-              0,
-              'gpt-4o',
-              'READ', // Default to READ, we could determine this from the messages
-              executionTime,
-              'success'
-            );
-          }
+        // Log the chat call
+        if (conversationId) {
+          await logChatCall(
+            conversationId,
+            0, // We don't have token counts from the API
+            0,
+            0,
+            'gpt-4o',
+            'READ', // Default to READ, we could determine this from the messages
+            executionTime,
+            'success'
+          );
         }
       } catch (error) {
-        console.error('Error processing response stream:', error);
-        
-        // Close the writer in case of error
-        try {
-          await writer.close();
-        } catch (closeError) {
-          console.error('Error closing writer:', closeError);
-        }
+        console.error('Error persisting conversation:', error);
       }
-    })();
-    
-    // Return a response with our custom readable stream
-    return new Response(readable, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      },
-    });
+    }, 1000); // Increased timeout to ensure the stream is complete
+
+    return response;
   } catch (error) {
     return new Response(JSON.stringify(logError(error)), {
       status: 500,
