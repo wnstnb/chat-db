@@ -9,7 +9,7 @@ export const maxDuration = 30;
 export async function POST(req: Request) {
   const { messages, threadId } = await req.json();
   const startTime = Date.now();
-
+  
   // Define a function to log errors
   const logError = (error: any) => {
     console.error('Error in chat API:', error);
@@ -17,76 +17,44 @@ export async function POST(req: Request) {
   };
 
   try {
-    // Create a buffer to accumulate the assistant's response
-    let assistantResponseBuffer = '';
-    
-    // Buffer to store tool outputs separately
-    let toolOutputsBuffer = '';
-    
     // Flag to track if we've persisted the conversation
     let hasPersistedConversation = false;
     
-    // Function to persist the conversation
-    const persistConversation = async () => {
-      if (hasPersistedConversation) return;
-      hasPersistedConversation = true;
-      
-      try {
-        console.log('Persisting conversation');
-        const endTime = Date.now();
-        const executionTime = endTime - startTime;
-        
-        // Get the last user message for generating a title
-        const lastUserMessage = messages.find((m: any) => m.role === 'user')?.content || '';
-        const title = lastUserMessage.length > 50 
-          ? lastUserMessage.substring(0, 50) + '...' 
-          : lastUserMessage;
-        
-        // Use the accumulated buffer for the assistant's message
-        const assistantMessage = assistantResponseBuffer || 'Response processed';
-        console.log('Assistant message length for persistence:', assistantMessage.length);
-        
-        // Add the assistant's response to the messages
-        const updatedMessages = [
-          ...messages, 
-          { role: 'assistant', content: assistantMessage }
-        ];
-        
-        // Save or update the conversation
-        let conversationId: number | null = null;
-        
-        if (threadId) {
-          // Update existing conversation
-          await updateConversation(parseInt(threadId), title, updatedMessages);
-          conversationId = parseInt(threadId);
-        } else {
-          // Create new conversation
-          conversationId = await saveConversation(title, updatedMessages);
-        }
-        
-        // Log the chat call
-        if (conversationId) {
-          await logChatCall(
-            conversationId,
-            0, // We don't have token counts from the API
-            0,
-            0,
-            'gpt-4o',
-            'READ', // Default to READ, we could determine this from the messages
-            executionTime,
-            'success'
-          );
-        }
-      } catch (error) {
-        console.error('Error persisting conversation:', error);
-      }
-    };
+    // Buffer to store the complete response
+    let fullResponseText = '';
+    
+    // Create a custom system prompt that instructs the model to include tool outputs in its response
+    const enhancedSystemPrompt = `${systemPrompt}
+
+# IMPORTANT: TOOL OUTPUT DISPLAY
+
+When you use a tool like 'query' or 'executeWrite', you MUST include the tool's output directly in your response.
+Format tool outputs clearly, for example:
+
+For SQL query results:
+1. Always include the actual data returned by the query
+2. Format tables using markdown
+3. For count queries, explicitly state the count value
+4. Never say you'll execute a query without showing the results
+
+Example:
+"Based on your question, I'll query the database to find the count of entities.
+
+\`\`\`sql
+SELECT COUNT(*) AS entity_count FROM entities;
+\`\`\`
+
+**Query Result:** The query returned a count of 14.
+
+This means there are 14 entities in the database."
+
+Remember: ALWAYS incorporate tool outputs directly into your response text.`;
     
     // Stream the response
     const result = streamText({
       model: openai("gpt-4o"),
       messages,
-      system: systemPrompt,
+      system: enhancedSystemPrompt,
       temperature: 0,
       maxTokens: 1500,
       // Set tool choice to auto to ensure the model uses tools when appropriate
@@ -109,7 +77,8 @@ export async function POST(req: Request) {
             try {
               // Validate that this is a read-only query
               if (!sql.trim().toLowerCase().startsWith('select')) {
-                throw new Error('Only SELECT queries are allowed with this tool. For write operations, use the executeWrite tool.');
+                const errorMessage = 'Only SELECT queries are allowed with this tool. For write operations, use the executeWrite tool.';
+                return `**Error:** ${errorMessage}`;
               }
               
               const result = await executeReadQuery(sql);
@@ -117,9 +86,7 @@ export async function POST(req: Request) {
               
               if (result.error) {
                 const errorMessage = `Error executing query: ${result.error.message || 'Unknown error'}`;
-                // Add to tool outputs buffer instead of assistant response buffer
-                toolOutputsBuffer += `\n${errorMessage}\n`;
-                return errorMessage;
+                return `**Error:** ${errorMessage}`;
               }
               
               // Check if this is a COUNT query
@@ -153,11 +120,8 @@ export async function POST(req: Request) {
                   }
                 }
                 
-                // Return a formatted string with the count result
-                const countMessage = `The query returned a count of ${countValue !== null ? countValue : 'unknown'}. Here is the raw result: ${JSON.stringify(result.data)}`;
-                // Add to tool outputs buffer instead of assistant response buffer
-                toolOutputsBuffer += `\n${countMessage}\n`;
-                return countMessage;
+                // Format the count result
+                return `**Query Result:** The query returned a count of ${countValue !== null ? countValue : 'unknown'}.`;
               }
               
               // For regular table queries, format as a markdown table
@@ -178,36 +142,23 @@ export async function POST(req: Request) {
                     }).join(' | ') + ' |\n';
                   });
                   
-                  const tableMessage = `Here are the query results:\n\n${markdownTable}`;
-                  // Add to tool outputs buffer instead of assistant response buffer
-                  toolOutputsBuffer += `\n${tableMessage}\n`;
-                  return tableMessage;
+                  // Format the table result
+                  return `**Query Result:**\n\n${markdownTable}`;
                 } catch (formatError) {
                   console.error('Error formatting table:', formatError);
                   // Fallback to JSON if table formatting fails
-                  const jsonMessage = `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
-                  // Add to tool outputs buffer instead of assistant response buffer
-                  toolOutputsBuffer += `\n${jsonMessage}\n`;
-                  return jsonMessage;
+                  return `**Query Result:** ${JSON.stringify(result.data, null, 2)}`;
                 }
               } else if (Array.isArray(result.data) && result.data.length === 0) {
-                const emptyMessage = `The query returned no results.`;
-                // Add to tool outputs buffer instead of assistant response buffer
-                toolOutputsBuffer += `\n${emptyMessage}\n`;
-                return emptyMessage;
+                return `**Query Result:** The query returned no results.`;
               } else {
                 // For other types of results, return as JSON
-                const jsonMessage = `Here are the query results: ${JSON.stringify(result.data, null, 2)}`;
-                // Add to tool outputs buffer instead of assistant response buffer
-                toolOutputsBuffer += `\n${jsonMessage}\n`;
-                return jsonMessage;
+                return `**Query Result:** ${JSON.stringify(result.data, null, 2)}`;
               }
             } catch (error: any) {
               console.error('Error executing read query:', error);
               const errorMessage = `Error executing query: ${error.message || 'Unknown error'}`;
-              // Add to tool outputs buffer instead of assistant response buffer
-              toolOutputsBuffer += `\n${errorMessage}\n`;
-              return errorMessage;
+              return `**Error:** ${errorMessage}`;
             }
           }
         },
@@ -232,16 +183,14 @@ export async function POST(req: Request) {
             try {
               // Only execute if confirmed
               if (!confirmed) {
-                const confirmMessage = `Write operation requires confirmation. Please confirm to execute this SQL: ${sql}`;
-                // Add to tool outputs buffer instead of assistant response buffer
-                toolOutputsBuffer += `\n${confirmMessage}\n`;
-                return confirmMessage;
+                return `**Write Operation:** Requires confirmation. Please confirm to execute this SQL: \`${sql}\``;
               }
               
               // Validate that this is a write query
               const queryType = sql.trim().toLowerCase().split(' ')[0];
               if (!['insert', 'update', 'delete'].includes(queryType)) {
-                throw new Error('Only INSERT, UPDATE, and DELETE queries are allowed with this tool.');
+                const errorMessage = 'Only INSERT, UPDATE, and DELETE queries are allowed with this tool.';
+                return `**Error:** ${errorMessage}`;
               }
               
               const result = await executeWriteQuery(sql);
@@ -249,105 +198,134 @@ export async function POST(req: Request) {
               
               if (result.error) {
                 const errorMessage = `Error executing write query: ${result.error.message || 'Unknown error'}`;
-                // Add to tool outputs buffer instead of assistant response buffer
-                toolOutputsBuffer += `\n${errorMessage}\n`;
-                return errorMessage;
+                return `**Error:** ${errorMessage}`;
               }
               
-              const successMessage = `Write operation (${queryType.toUpperCase()}) completed successfully.`;
-              // Add to tool outputs buffer instead of assistant response buffer
-              toolOutputsBuffer += `\n${successMessage}\n`;
-              return successMessage;
+              return `**Write Operation:** ${queryType.toUpperCase()} completed successfully.`;
             } catch (error: any) {
               console.error('Error executing write query:', error);
               const errorMessage = `Error executing write query: ${error.message || 'Unknown error'}`;
-              // Add to tool outputs buffer instead of assistant response buffer
-              toolOutputsBuffer += `\n${errorMessage}\n`;
-              return errorMessage;
+              return `**Error:** ${errorMessage}`;
             }
           }
         }
       }
     });
-
-    // Process the response
-    const response = result.toDataStreamResponse();
     
-    // Create a clone of the response to read the full content
-    const clonedResponse = response.clone();
+    // Create a custom response that captures the full text
+    const { readable, writable } = new TransformStream();
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
     
-    // Read the full response in the background
+    // Create a writer to the writable stream
+    const writer = writable.getWriter();
+    
+    // Process the result and write to our custom stream
     (async () => {
       try {
-        // Wait for the full response to be available
-        const reader = clonedResponse.body?.getReader();
+        // Get the original response
+        const originalResponse = result.toDataStreamResponse();
+        
+        // Read from the original response and write to our custom stream
+        const reader = originalResponse.body?.getReader();
         if (!reader) {
           console.error('No reader available for response');
           return;
         }
         
-        let fullResponseText = '';
-        
-        // Read the stream chunk by chunk
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           
-          // Convert the chunk to text and append to the full response
-          const chunkText = new TextDecoder().decode(value);
+          // Decode the chunk to text and append to our buffer
+          const chunkText = decoder.decode(value, { stream: true });
           fullResponseText += chunkText;
+          
+          // Write the chunk to our custom stream
+          await writer.write(value);
         }
         
-        console.log('Full response read, length:', fullResponseText.length);
-        
-        // Now merge the model's response with any tool outputs
-        if (toolOutputsBuffer) {
-          console.log('Tool outputs found, length:', toolOutputsBuffer.length);
-          console.log('Tool outputs preview:', toolOutputsBuffer.substring(0, 100) + '...');
-          console.log('Full response preview:', fullResponseText.substring(0, 100) + '...');
-          
-          // Use the model's response as the primary content, and append tool outputs if they exist
-          assistantResponseBuffer = fullResponseText + "\n\n--- Tool Outputs ---\n\n" + toolOutputsBuffer;
-          
-          // Log the first and last 100 characters of the merged response
-          console.log('Merged response preview (first 100 chars):', assistantResponseBuffer.substring(0, 100) + '...');
-          console.log('Merged response preview (last 100 chars):', '...' + assistantResponseBuffer.substring(assistantResponseBuffer.length - 100));
-        } else {
-          // No tool outputs, just use the full response
-          assistantResponseBuffer = fullResponseText;
+        // Finalize the decoding
+        const finalChunk = decoder.decode();
+        if (finalChunk) {
+          fullResponseText += finalChunk;
         }
         
-        console.log('Final response length:', assistantResponseBuffer.length);
+        // Close the writer
+        await writer.close();
         
-        // Persist the conversation if we haven't already
+        console.log('Full response accumulated, length:', fullResponseText.length);
+        
+        // Persist the conversation
         if (!hasPersistedConversation) {
-          await persistConversation();
+          hasPersistedConversation = true;
+          
+          console.log('Persisting conversation');
+          const endTime = Date.now();
+          const executionTime = endTime - startTime;
+          
+          // Get the last user message for generating a title
+          const lastUserMessage = messages.find((m: any) => m.role === 'user')?.content || '';
+          const title = lastUserMessage.length > 50 
+            ? lastUserMessage.substring(0, 50) + '...' 
+            : lastUserMessage;
+          
+          // Use the accumulated text for the assistant's message
+          const assistantMessage = fullResponseText || 'Response processed';
+          console.log('Assistant message length for persistence:', assistantMessage.length);
+          
+          // Add the assistant's response to the messages
+          const updatedMessages = [
+            ...messages, 
+            { role: 'assistant', content: assistantMessage }
+          ];
+          
+          // Save or update the conversation
+          let conversationId: number | null = null;
+          
+          if (threadId) {
+            // Update existing conversation
+            await updateConversation(parseInt(threadId), title, updatedMessages);
+            conversationId = parseInt(threadId);
+          } else {
+            // Create new conversation
+            conversationId = await saveConversation(title, updatedMessages);
+          }
+          
+          // Log the chat call
+          if (conversationId) {
+            await logChatCall(
+              conversationId,
+              0, // We don't have token counts from the API
+              0,
+              0,
+              'gpt-4o',
+              'READ', // Default to READ, we could determine this from the messages
+              executionTime,
+              'success'
+            );
+          }
         }
       } catch (error) {
-        console.error('Error reading full response:', error);
+        console.error('Error processing response stream:', error);
         
-        // If there was an error reading the full response, but we have tool outputs,
-        // use those as a fallback
-        if (toolOutputsBuffer && !assistantResponseBuffer) {
-          assistantResponseBuffer = toolOutputsBuffer;
-        }
-        
-        // Persist the conversation if we haven't already
-        if (!hasPersistedConversation) {
-          await persistConversation();
+        // Close the writer in case of error
+        try {
+          await writer.close();
+        } catch (closeError) {
+          console.error('Error closing writer:', closeError);
         }
       }
     })();
     
-    // Set up a timeout as a fallback, but make it much longer
-    setTimeout(() => {
-      if (!hasPersistedConversation) {
-        console.log('Persisting conversation after timeout');
-        persistConversation();
-      }
-    }, 10000); // 10 seconds should be plenty of time for most responses
-
-    return response;
+    // Return a response with our custom readable stream
+    return new Response(readable, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    });
   } catch (error) {
     return new Response(JSON.stringify(logError(error)), {
       status: 500,
