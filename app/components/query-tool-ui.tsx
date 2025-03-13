@@ -46,61 +46,182 @@ const markdownTableToHtml = (markdownTable: string): string => {
   return html;
 };
 
-export const QueryToolUI = makeAssistantToolUI<QueryArgs, QueryResult>({
-  toolName: "query",
-  render: ({ args, result, status }) => {
-    const [formattedHtml, setFormattedHtml] = useState<string | null>(null);
-    
-    if (status.type === "running") {
-      return (
-        <div className="p-4 bg-gray-100 rounded-md my-2">
-          <p className="font-mono text-sm">Executing query: {args?.sql}</p>
-          <div className="mt-2 animate-pulse">Loading results...</div>
-        </div>
-      );
-    }
+// Function to format query results
+const formatQueryResult = (displayResult: string): string => {
+  // Check if the result already contains a properly formatted markdown table
+  if (displayResult.includes('| ') && displayResult.includes(' |') && displayResult.includes('---')) {
+    console.log('Result already contains a markdown table, using as is');
+    return displayResult;
+  }
 
-    if (!result) {
-      return null;
-    }
+  // Check if this is a raw JSON result that needs formatting
+  const isRawJson = !displayResult.includes('Error executing query:') && 
+                   !displayResult.includes('{"error":') && 
+                   !displayResult.includes('|') && 
+                   (displayResult.includes('[{') || 
+                    displayResult.includes('Here is the raw result:'));
 
-    // Extract the actual result from the formatted string
-    // The result might be in the format "IMPORTANT: Include this exact result in your response: {actualResult}"
-    let displayResult = result;
-    const resultMatch = result.match(/IMPORTANT: Include this exact (?:result|error) in your response: ([\s\S]*?)(?:\n\nCRITICAL:|$)/);
-    if (resultMatch && resultMatch[1]) {
-      displayResult = resultMatch[1].trim();
-    }
-
-    // Check if the result contains an error
-    const isError = displayResult.includes('Error executing query:') || 
-                    displayResult.includes('{"error":');
-    
-    // Check if this is a raw JSON result that needs formatting
-    const isRawJson = !isError && !displayResult.includes('|') && (
-      displayResult.includes('[{') || 
-      displayResult.includes('Here is the raw result:')
-    );
-
-    // Format raw JSON results
-    let formattedResult = displayResult;
-    if (isRawJson) {
-      try {
-        // Extract JSON data
-        let jsonData;
-        const rawResultMatch = displayResult.match(/Here is the raw result: (.+)$/);
-        if (rawResultMatch && rawResultMatch[1]) {
-          jsonData = JSON.parse(rawResultMatch[1]);
-        } else if (displayResult.includes('Here are the query results:')) {
-          const jsonMatch = displayResult.match(/Here are the query results: (.+)$/);
-          if (jsonMatch && jsonMatch[1]) {
-            jsonData = JSON.parse(jsonMatch[1]);
+  // Format raw JSON results
+  let formattedResult = displayResult;
+  if (isRawJson) {
+    try {
+      // Extract JSON data
+      let jsonData;
+      let jsonString = '';
+      
+      console.log('Raw display result:', displayResult);
+      
+      // Use a more compatible regex approach for multiline matching
+      const rawResultIndex = displayResult.indexOf('Here is the raw result:');
+      if (rawResultIndex !== -1) {
+        jsonString = displayResult.substring(rawResultIndex + 'Here is the raw result:'.length).trim();
+        console.log('Extracted JSON string from raw result:', jsonString);
+        try {
+          jsonData = JSON.parse(jsonString);
+          console.log('Parsed JSON data:', jsonData);
+        } catch (parseError) {
+          console.error('Error parsing JSON from raw result:', parseError);
+          // Try to clean the string before parsing
+          const cleanedString = jsonString.replace(/\\"/g, '"').replace(/\\n/g, '');
+          console.log('Cleaned JSON string:', cleanedString);
+          try {
+            jsonData = JSON.parse(cleanedString);
+            console.log('Parsed JSON data after cleaning:', jsonData);
+          } catch (cleanParseError) {
+            console.error('Error parsing cleaned JSON:', cleanParseError);
+            
+            // Try one more approach - look for array-like structures
+            try {
+              // Sometimes the JSON is malformed but still contains the data
+              // Try to extract just the array part
+              const arrayMatch = cleanedString.match(/\[\s*\{.*\}\s*\]/);
+              if (arrayMatch) {
+                const arrayString = arrayMatch[0];
+                console.log('Extracted array string:', arrayString);
+                jsonData = JSON.parse(arrayString);
+                console.log('Parsed array data:', jsonData);
+              }
+            } catch (arrayParseError) {
+              console.error('Error parsing array:', arrayParseError);
+            }
           }
         }
+      } else if (displayResult.includes('Here are the query results:')) {
+        const queryResultsIndex = displayResult.indexOf('Here are the query results:');
+        if (queryResultsIndex !== -1) {
+          jsonString = displayResult.substring(queryResultsIndex + 'Here are the query results:'.length).trim();
+          console.log('Extracted JSON string from query results:', jsonString);
+          try {
+            jsonData = JSON.parse(jsonString);
+            console.log('Parsed JSON data:', jsonData);
+          } catch (parseError) {
+            console.error('Error parsing JSON from query results:', parseError);
+            // Try to clean the string before parsing
+            const cleanedString = jsonString.replace(/\\"/g, '"').replace(/\\n/g, '');
+            console.log('Cleaned JSON string:', cleanedString);
+            try {
+              jsonData = JSON.parse(cleanedString);
+              console.log('Parsed JSON data after cleaning:', jsonData);
+            } catch (cleanParseError) {
+              console.error('Error parsing cleaned JSON:', cleanParseError);
+            }
+          }
+        }
+      }
 
-        if (jsonData && Array.isArray(jsonData)) {
-          // Create a markdown table from the JSON data
-          if (jsonData.length > 0) {
+      // If we still don't have valid JSON data, try to extract it from the text
+      if (!jsonData) {
+        // Look for anything that looks like JSON array in the text
+        const startBracket = displayResult.indexOf('[{');
+        const endBracket = displayResult.lastIndexOf('}]');
+        if (startBracket !== -1 && endBracket !== -1 && endBracket > startBracket) {
+          jsonString = displayResult.substring(startBracket, endBracket + 2);
+          console.log('Extracted JSON array from text:', jsonString);
+          try {
+            jsonData = JSON.parse(jsonString);
+            console.log('Parsed JSON array:', jsonData);
+          } catch (parseError) {
+            console.error('Error parsing JSON array:', parseError);
+            
+            // Try with a more lenient approach
+            try {
+              // Replace single quotes with double quotes
+              const fixedString = jsonString.replace(/'/g, '"');
+              jsonData = JSON.parse(fixedString);
+              console.log('Parsed JSON array after fixing quotes:', jsonData);
+            } catch (fixedParseError) {
+              console.error('Error parsing fixed JSON array:', fixedParseError);
+            }
+          }
+        }
+      }
+
+      if (jsonData && Array.isArray(jsonData)) {
+        // Create a markdown table from the JSON data
+        if (jsonData.length > 0) {
+          const headers = Object.keys(jsonData[0]);
+          let markdownTable = '| ' + headers.join(' | ') + ' |\n';
+          markdownTable += '| ' + headers.map(() => '---').join(' | ') + ' |\n';
+          
+          jsonData.forEach((row) => {
+            markdownTable += '| ' + headers.map(header => {
+              const value = row[header];
+              return value !== null && value !== undefined ? String(value) : '';
+            }).join(' | ') + ' |\n';
+          });
+          
+          // Replace the raw JSON with the markdown table
+          if (rawResultIndex !== -1) {
+            const beforeResult = displayResult.substring(0, rawResultIndex);
+            formattedResult = beforeResult + `Here are the query results:\n\n${markdownTable}`;
+          } else {
+            formattedResult = `Here are the query results:\n\n${markdownTable}`;
+          }
+          
+          console.log('Generated markdown table:', markdownTable);
+        } else {
+          console.log('JSON data is an empty array');
+        }
+      } else {
+        console.log('JSON data is not an array or is null:', jsonData);
+      }
+    } catch (error) {
+      console.error('Error formatting JSON result:', error);
+      // Keep the original result if formatting fails
+    }
+  } else {
+    console.log('Result is not identified as raw JSON:', displayResult.substring(0, 100) + '...');
+  }
+
+  // Special handling for count queries
+  if (displayResult.includes('The query returned a count of') || 
+      displayResult.includes('count') || 
+      displayResult.includes('COUNT')) {
+    try {
+      // First check if there's already a markdown table in the result
+      if (displayResult.includes('| ') && displayResult.includes(' |') && displayResult.includes('---')) {
+        console.log('Count result already contains a markdown table, using as is');
+        return displayResult;
+      }
+      
+      const countMatch = displayResult.match(/The query returned a count of (\d+)/);
+      if (countMatch && countMatch[1]) {
+        const count = parseInt(countMatch[1]);
+        console.log('Detected count query with count:', count);
+      }
+      
+      // Extract the raw result to get the labels and counts
+      const rawResultIndex = displayResult.indexOf('Here is the raw result:');
+      if (rawResultIndex !== -1) {
+        let jsonString = displayResult.substring(rawResultIndex + 'Here is the raw result:'.length).trim();
+        console.log('Extracted JSON string from count result:', jsonString);
+        
+        try {
+          const jsonData = JSON.parse(jsonString);
+          console.log('Parsed JSON data for count:', jsonData);
+          
+          if (Array.isArray(jsonData) && jsonData.length > 0) {
+            // Create a better formatted result with a table
             const headers = Object.keys(jsonData[0]);
             let markdownTable = '| ' + headers.join(' | ') + ' |\n';
             markdownTable += '| ' + headers.map(() => '---').join(' | ') + ' |\n';
@@ -112,31 +233,18 @@ export const QueryToolUI = makeAssistantToolUI<QueryArgs, QueryResult>({
               }).join(' | ') + ' |\n';
             });
             
-            // Replace the raw JSON with the markdown table
-            if (rawResultMatch) {
-              formattedResult = displayResult.replace(rawResultMatch[0], `Here are the query results:\n\n${markdownTable}`);
-            } else {
-              formattedResult = `Here are the query results:\n\n${markdownTable}`;
-            }
+            formattedResult = `The query returned ${jsonData.length} results:\n\n${markdownTable}`;
+            console.log('Generated count table:', markdownTable);
+            return formattedResult;
           }
-        }
-      } catch (error) {
-        console.error('Error formatting JSON result:', error);
-        // Keep the original result if formatting fails
-      }
-    }
-
-    // Special handling for count queries
-    if (displayResult.includes('The query returned a count of')) {
-      try {
-        const countMatch = displayResult.match(/The query returned a count of (\d+)/);
-        if (countMatch && countMatch[1]) {
-          const count = parseInt(countMatch[1]);
-          
-          // Extract the raw result to get the labels and counts
-          const rawResultMatch = displayResult.match(/Here is the raw result: (.+)$/);
-          if (rawResultMatch && rawResultMatch[1]) {
-            const jsonData = JSON.parse(rawResultMatch[1]);
+        } catch (parseError) {
+          console.error('Error parsing JSON from count result:', parseError);
+          // Try to clean the string before parsing
+          const cleanedString = jsonString.replace(/\\"/g, '"').replace(/\\n/g, '');
+          console.log('Cleaned JSON string for count:', cleanedString);
+          try {
+            const jsonData = JSON.parse(cleanedString);
+            console.log('Parsed JSON data for count after cleaning:', jsonData);
             
             if (Array.isArray(jsonData) && jsonData.length > 0) {
               // Create a better formatted result with a table
@@ -152,18 +260,127 @@ export const QueryToolUI = makeAssistantToolUI<QueryArgs, QueryResult>({
               });
               
               formattedResult = `The query returned ${jsonData.length} results:\n\n${markdownTable}`;
+              console.log('Generated count table after cleaning:', markdownTable);
+              return formattedResult;
+            }
+          } catch (cleanParseError) {
+            console.error('Error parsing cleaned JSON for count:', cleanParseError);
+            
+            // Try one more approach - look for array-like structures
+            try {
+              // Sometimes the JSON is malformed but still contains the data
+              // Try to extract just the array part
+              const arrayMatch = cleanedString.match(/\[\s*\{.*\}\s*\]/);
+              if (arrayMatch) {
+                const arrayString = arrayMatch[0];
+                console.log('Extracted array string from count:', arrayString);
+                const jsonData = JSON.parse(arrayString);
+                console.log('Parsed array data for count:', jsonData);
+                
+                if (Array.isArray(jsonData) && jsonData.length > 0) {
+                  // Create a better formatted result with a table
+                  const headers = Object.keys(jsonData[0]);
+                  let markdownTable = '| ' + headers.join(' | ') + ' |\n';
+                  markdownTable += '| ' + headers.map(() => '---').join(' | ') + ' |\n';
+                  
+                  jsonData.forEach((row) => {
+                    markdownTable += '| ' + headers.map(header => {
+                      const value = row[header];
+                      return value !== null && value !== undefined ? String(value) : '';
+                    }).join(' | ') + ' |\n';
+                  });
+                  
+                  formattedResult = `The query returned ${jsonData.length} results:\n\n${markdownTable}`;
+                  console.log('Generated count table from array extraction:', markdownTable);
+                  return formattedResult;
+                }
+              }
+            } catch (arrayParseError) {
+              console.error('Error parsing array for count:', arrayParseError);
             }
           }
         }
-      } catch (error) {
-        console.error('Error formatting count result:', error);
-        // Keep the original result if formatting fails
       }
+      
+      // If we still don't have a table, try to extract JSON directly from the text
+      const startBracket = displayResult.indexOf('[{');
+      const endBracket = displayResult.lastIndexOf('}]');
+      if (startBracket !== -1 && endBracket !== -1 && endBracket > startBracket) {
+        const jsonString = displayResult.substring(startBracket, endBracket + 2);
+        console.log('Extracted JSON array from count text:', jsonString);
+        try {
+          const jsonData = JSON.parse(jsonString);
+          console.log('Parsed JSON array for count:', jsonData);
+          
+          if (Array.isArray(jsonData) && jsonData.length > 0) {
+            // Create a better formatted result with a table
+            const headers = Object.keys(jsonData[0]);
+            let markdownTable = '| ' + headers.join(' | ') + ' |\n';
+            markdownTable += '| ' + headers.map(() => '---').join(' | ') + ' |\n';
+            
+            jsonData.forEach((row) => {
+              markdownTable += '| ' + headers.map(header => {
+                const value = row[header];
+                return value !== null && value !== undefined ? String(value) : '';
+              }).join(' | ') + ' |\n';
+            });
+            
+            formattedResult = `The query returned ${jsonData.length} results:\n\n${markdownTable}`;
+            console.log('Generated count table from direct extraction:', markdownTable);
+            return formattedResult;
+          }
+        } catch (parseError) {
+          console.error('Error parsing JSON array for count:', parseError);
+        }
+      }
+    } catch (error) {
+      console.error('Error formatting count result:', error);
+      // Keep the original result if formatting fails
     }
+  }
+
+  return formattedResult;
+};
+
+export const QueryToolUI = makeAssistantToolUI<QueryArgs, QueryResult>({
+  toolName: "query",
+  render: ({ args, result, status }) => {
+    // Always declare all hooks at the top level
+    const [displayResult, setDisplayResult] = useState<string>("");
+    const [formattedResult, setFormattedResult] = useState<string>("");
+    const [formattedHtml, setFormattedHtml] = useState<string>("");
+    const [isError, setIsError] = useState<boolean>(false);
+    
+    // Process the result whenever it changes
+    useEffect(() => {
+      if (!result) return;
+      
+      // Extract the actual result from the formatted string
+      let extractedResult = result;
+      const resultMatch = result.match(/IMPORTANT: Include this exact (?:result|error) in your response: ([\s\S]*?)(?:\n\nCRITICAL:|$)/);
+      if (resultMatch && resultMatch[1]) {
+        extractedResult = resultMatch[1].trim();
+      }
+      
+      // Check if the result contains an error
+      const hasError = extractedResult.includes('Error executing query:') || 
+                      extractedResult.includes('{"error":');
+      
+      setDisplayResult(extractedResult);
+      setIsError(hasError);
+      
+      if (!hasError) {
+        // Format the result
+        const formatted = formatQueryResult(extractedResult);
+        setFormattedResult(formatted);
+      }
+    }, [result]);
     
     // Convert markdown tables to HTML with styling
     useEffect(() => {
-      if (formattedResult && formattedResult.includes('|')) {
+      if (!formattedResult) return;
+      
+      if (formattedResult.includes('|')) {
         // Find markdown tables in the result
         const parts = formattedResult.split('\n\n');
         const processedParts = parts.map(part => {
@@ -179,6 +396,19 @@ export const QueryToolUI = makeAssistantToolUI<QueryArgs, QueryResult>({
       }
     }, [formattedResult]);
     
+    if (status.type === "running") {
+      return (
+        <div className="p-4 bg-gray-100 rounded-md my-2">
+          <p className="font-mono text-sm">Executing query: {args?.sql}</p>
+          <div className="mt-2 animate-pulse">Loading results...</div>
+        </div>
+      );
+    }
+
+    if (!result) {
+      return null;
+    }
+    
     return (
       <div className={`p-4 ${isError ? 'bg-red-50' : 'bg-gray-100'} rounded-md my-2`}>
         <p className="font-mono text-sm mb-2">Query: {args?.sql}</p>
@@ -191,11 +421,7 @@ export const QueryToolUI = makeAssistantToolUI<QueryArgs, QueryResult>({
                 <p className="mt-2">Try modifying your query and running it again.</p>
               </div>
             ) : (
-              formattedHtml ? (
-                <div dangerouslySetInnerHTML={{ __html: formattedHtml }} />
-              ) : (
-                <div dangerouslySetInnerHTML={{ __html: formattedResult }} />
-              )
+              <div dangerouslySetInnerHTML={{ __html: formattedHtml || formattedResult || displayResult }} />
             )}
           </div>
         </div>
@@ -210,6 +436,29 @@ export const WriteQueryToolUI = makeAssistantToolUI<
 >({
   toolName: "executeWrite",
   render: ({ args, result, status }) => {
+    // Always declare hooks at the top level
+    const [displayResult, setDisplayResult] = useState<string>("");
+    const [isError, setIsError] = useState<boolean>(false);
+    
+    // Process the result whenever it changes
+    useEffect(() => {
+      if (!result) return;
+      
+      // Extract the actual result from the formatted string
+      let extractedResult = result;
+      const resultMatch = result.match(/IMPORTANT: Include this exact (?:message|error) in your response: ([\s\S]*?)(?:\n\nCRITICAL:|$)/);
+      if (resultMatch && resultMatch[1]) {
+        extractedResult = resultMatch[1].trim();
+      }
+      
+      // Check if the result contains an error
+      const hasError = extractedResult.includes('Error') || 
+                      extractedResult.includes('{"error":');
+      
+      setDisplayResult(extractedResult);
+      setIsError(hasError);
+    }, [result]);
+    
     if (status.type === "running") {
       return (
         <div className="p-4 bg-gray-100 rounded-md my-2">
@@ -226,17 +475,6 @@ export const WriteQueryToolUI = makeAssistantToolUI<
     if (!result) {
       return null;
     }
-
-    // Extract the actual result from the formatted string
-    let displayResult = result;
-    const resultMatch = result.match(/IMPORTANT: Include this exact (?:message|error) in your response: ([\s\S]*?)(?:\n\nCRITICAL:|$)/);
-    if (resultMatch && resultMatch[1]) {
-      displayResult = resultMatch[1].trim();
-    }
-
-    // Check if the result contains an error
-    const isError = displayResult.includes('Error') || 
-                    displayResult.includes('{"error":');
 
     return (
       <div className={`p-4 ${isError ? 'bg-red-50' : 'bg-gray-100'} rounded-md my-2`}>

@@ -60,14 +60,20 @@ export async function POST(req: Request) {
 CRITICAL: You MUST include the above text VERBATIM in your response. Do not paraphrase or summarize it.`;
               }
               
+              // Remove semicolons from the end of the query
+              let modifiedSql = sql.trim();
+              if (modifiedSql.endsWith(';')) {
+                modifiedSql = modifiedSql.slice(0, -1);
+                console.log('Removed semicolon from query:', modifiedSql);
+              }
+              
               // Special handling for GROUP BY queries to avoid syntax errors
-              let modifiedSql = sql;
-              if (sql.toLowerCase().includes('group by')) {
+              if (modifiedSql.toLowerCase().includes('group by')) {
                 console.log('Detected GROUP BY query, using special handling');
                 
                 // Ensure the query has proper aliases for aggregated columns
-                if (sql.toLowerCase().includes('count(*)') && !sql.toLowerCase().includes('as ')) {
-                  modifiedSql = sql.replace(/COUNT\(\*\)/i, 'COUNT(*) AS count');
+                if (modifiedSql.toLowerCase().includes('count(*)') && !modifiedSql.toLowerCase().includes('as ')) {
+                  modifiedSql = modifiedSql.replace(/COUNT\(\*\)/i, 'COUNT(*) AS count');
                   console.log('Modified query to add alias:', modifiedSql);
                 }
               }
@@ -311,40 +317,57 @@ CRITICAL: You MUST include the above text VERBATIM in your response. Do not para
             required: ["sql", "confirmed"]
           }),
           execute: async ({ sql, confirmed }) => {
-            console.log('Executing write query:', sql, 'confirmed:', confirmed);
+            console.log('Executing write query:', sql, 'Confirmed:', confirmed);
             try {
               // Only execute if confirmed
               if (!confirmed) {
                 const confirmMessage = `Write operation requires confirmation. Please confirm to execute this SQL: ${sql}`;
                 toolOutputs.push(confirmMessage);
-                return `IMPORTANT: Include this exact message in your response: ${confirmMessage}`;
+                return `IMPORTANT: Include this exact message in your response: ${confirmMessage}
+
+CRITICAL: You MUST include the above text VERBATIM in your response. Do not paraphrase or summarize it.`;
+              }
+              
+              // Remove semicolons from the end of the query
+              let modifiedSql = sql.trim();
+              if (modifiedSql.endsWith(';')) {
+                modifiedSql = modifiedSql.slice(0, -1);
+                console.log('Removed semicolon from write query:', modifiedSql);
               }
               
               // Validate that this is a write query
-              const queryType = sql.trim().toLowerCase().split(' ')[0];
+              const queryType = modifiedSql.trim().toLowerCase().split(' ')[0];
               if (!['insert', 'update', 'delete'].includes(queryType)) {
                 const errorMessage = `Error: Only INSERT, UPDATE, and DELETE queries are allowed with this tool.`;
                 toolOutputs.push(errorMessage);
-                return `IMPORTANT: Include this exact error in your response: ${errorMessage}`;
+                return `IMPORTANT: Include this exact error in your response: ${errorMessage}
+
+CRITICAL: You MUST include the above text VERBATIM in your response. Do not paraphrase or summarize it.`;
               }
               
-              const result = await executeWriteQuery(sql);
+              const result = await executeWriteQuery(modifiedSql);
               console.log('Write query result:', result);
               
               if (result.error) {
                 const errorMessage = `Error executing write query: ${result.error.message || 'Unknown error'}`;
                 toolOutputs.push(errorMessage);
-                return `IMPORTANT: Include this exact error in your response: ${errorMessage}`;
+                return `IMPORTANT: Include this exact error in your response: ${errorMessage}
+
+CRITICAL: You MUST include the above text VERBATIM in your response. Do not paraphrase or summarize it.`;
               }
               
               const successMessage = `Write operation (${queryType.toUpperCase()}) completed successfully.`;
               toolOutputs.push(successMessage);
-              return `IMPORTANT: Include this exact message in your response: ${successMessage}`;
+              return `IMPORTANT: Include this exact message in your response: ${successMessage}
+
+CRITICAL: You MUST include the above text VERBATIM in your response. Do not paraphrase or summarize it.`;
             } catch (error: any) {
               console.error('Error executing write query:', error);
               const errorMessage = `Error executing write query: ${error.message || 'Unknown error'}`;
               toolOutputs.push(errorMessage);
-              return `IMPORTANT: Include this exact error in your response: ${errorMessage}`;
+              return `IMPORTANT: Include this exact error in your response: ${errorMessage}
+
+CRITICAL: You MUST include the above text VERBATIM in your response. Do not paraphrase or summarize it.`;
             }
           }
         }

@@ -129,8 +129,11 @@ export async function executeReadQuery(query: string, params: any[] = []): Promi
   try {
     console.log('Executing read query in database.ts:', query);
     
+    // Remove semicolons from the end of the query
+    const cleanQuery = query.trim().endsWith(';') ? query.trim().slice(0, -1) : query.trim();
+    
     // Check if the query is a SELECT query
-    if (!query.trim().toLowerCase().startsWith('select')) {
+    if (!cleanQuery.toLowerCase().startsWith('select')) {
       return { 
         data: null, 
         error: new Error('Only SELECT queries are allowed with this function') 
@@ -140,7 +143,7 @@ export async function executeReadQuery(query: string, params: any[] = []): Promi
     // Execute the query using the Supabase RPC function
     try {
       const { data, error } = await supabase.rpc('execute_read_query', {
-        query_text: query,
+        query_text: cleanQuery,
         query_params: params,
       });
 
@@ -156,8 +159,8 @@ export async function executeReadQuery(query: string, params: any[] = []): Promi
       // If RPC fails, try direct query as a fallback
       try {
         // For simple queries, we can try to execute them directly
-        if (query.toLowerCase().startsWith('select * from')) {
-          const tableName = query.toLowerCase().split('from')[1].trim().split(' ')[0].trim();
+        if (cleanQuery.toLowerCase().startsWith('select * from')) {
+          const tableName = cleanQuery.toLowerCase().split('from')[1].trim().split(' ')[0].trim();
           console.log(`Attempting direct query on table: ${tableName}`);
           
           const { data: directData, error: directError } = await supabase
@@ -185,8 +188,11 @@ export async function executeWriteQuery(query: string, params: any[] = []): Prom
   try {
     console.log('Executing write query in database.ts:', query);
     
+    // Remove semicolons from the end of the query
+    const cleanQuery = query.trim().endsWith(';') ? query.trim().slice(0, -1) : query.trim();
+    
     // Check if the query is a write query
-    const queryType = query.trim().toLowerCase().split(' ')[0];
+    const queryType = cleanQuery.toLowerCase().split(' ')[0];
     if (!['insert', 'update', 'delete'].includes(queryType)) {
       return { 
         data: null, 
@@ -197,7 +203,7 @@ export async function executeWriteQuery(query: string, params: any[] = []): Prom
     // Execute the query using the Supabase RPC function
     try {
       const { data, error } = await supabase.rpc('execute_write_query', {
-        query_text: query,
+        query_text: cleanQuery,
         query_params: params,
       });
 

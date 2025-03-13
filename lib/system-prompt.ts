@@ -32,6 +32,7 @@ NEVER say you'll execute a query without showing the results. Always include the
 \`\`\`sql
 -- Pages table: Stores information about document pages
 Table: pages(
+    id SERIAL PRIMARY KEY,  -- Unique identifier for each page
     filename TEXT,          -- File name of the uploaded document
     preprocessed TEXT,      -- File path of a page's final preprocessed image
     page_number INTEGER,    -- Page number in the document
