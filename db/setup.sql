@@ -30,6 +30,11 @@ AS $$
 DECLARE
     result JSONB;
     query_type TEXT;
+    dynamic_query TEXT;
+    temp_table_name TEXT;
+    column_names TEXT[];
+    column_name TEXT;
+    column_list TEXT;
 BEGIN
     -- Extract the first word of the query to determine its type
     query_type := lower(split_part(trim(query_text), ' ', 1));
@@ -39,12 +44,91 @@ BEGIN
         RAISE EXCEPTION 'Only SELECT queries are allowed with this function';
     END IF;
     
-    -- Execute the query and return the results as JSON
-    EXECUTE query_text INTO result;
+    -- Log the query for debugging
+    RAISE NOTICE 'Executing query: %', query_text;
     
-    RETURN result;
+    -- Special handling for GROUP BY queries
+    IF query_text ILIKE '%GROUP BY%' THEN
+        BEGIN
+            -- Create a temporary table to store the results
+            temp_table_name := 'temp_results_' || md5(random()::text);
+            
+            -- Create the temporary table
+            EXECUTE 'CREATE TEMPORARY TABLE ' || temp_table_name || ' AS ' || query_text;
+            
+            -- Get the column names from the temporary table
+            EXECUTE 'SELECT array_agg(column_name::text) FROM information_schema.columns WHERE table_name = $1'
+                INTO column_names
+                USING temp_table_name;
+            
+            -- Build a column list for the SELECT statement
+            column_list := '';
+            FOREACH column_name IN ARRAY column_names LOOP
+                IF column_list != '' THEN
+                    column_list := column_list || ', ';
+                END IF;
+                column_list := column_list || quote_ident(column_name);
+            END LOOP;
+            
+            -- Select the data from the temporary table and convert to JSON
+            EXECUTE 'SELECT json_agg(row_to_json(t)) FROM (SELECT ' || column_list || ' FROM ' || temp_table_name || ') t'
+                INTO result;
+            
+            -- Drop the temporary table
+            EXECUTE 'DROP TABLE IF EXISTS ' || temp_table_name;
+            
+            -- Handle NULL result (empty result set)
+            IF result IS NULL THEN
+                result := '[]'::jsonb;
+            END IF;
+            
+            RETURN result;
+        EXCEPTION
+            WHEN OTHERS THEN
+                -- Log the error for debugging
+                RAISE NOTICE 'Error executing GROUP BY query: %, SQLSTATE: %', SQLERRM, SQLSTATE;
+                
+                -- Try a simpler approach
+                BEGIN
+                    -- For GROUP BY queries, try a simpler approach
+                    EXECUTE 'SELECT json_agg(t) FROM (' || query_text || ') t' INTO result;
+                    
+                    -- Handle NULL result (empty result set)
+                    IF result IS NULL THEN
+                        result := '[]'::jsonb;
+                    END IF;
+                    
+                    RETURN result;
+                EXCEPTION
+                    WHEN OTHERS THEN
+                        -- Log the error for debugging
+                        RAISE NOTICE 'Error executing simplified GROUP BY query: %, SQLSTATE: %', SQLERRM, SQLSTATE;
+                        RETURN jsonb_build_object('error', SQLERRM);
+                END;
+        END;
+    ELSE
+        -- For simple queries, try direct execution
+        BEGIN
+            -- Execute the query directly and convert to JSON
+            EXECUTE 'SELECT array_to_json(array_agg(row_to_json(t))) FROM (' || query_text || ') t' INTO result;
+            
+            -- Handle NULL result (empty result set)
+            IF result IS NULL THEN
+                result := '[]'::jsonb;
+            END IF;
+            
+            RETURN result;
+        EXCEPTION
+            WHEN OTHERS THEN
+                -- Log the error for debugging
+                RAISE NOTICE 'Error executing direct query: %, SQLSTATE: %', SQLERRM, SQLSTATE;
+                RETURN jsonb_build_object('error', SQLERRM);
+        END;
+    END IF;
 EXCEPTION
     WHEN OTHERS THEN
+        -- Log the error for debugging
+        RAISE NOTICE 'Error in execute_read_query: %, SQLSTATE: %', SQLERRM, SQLSTATE;
         RETURN jsonb_build_object('error', SQLERRM);
 END;
 $$;

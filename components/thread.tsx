@@ -4,6 +4,7 @@ import {
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  TextContentPart,
 } from "@assistant-ui/react";
 import type { FC } from "react";
 import {
@@ -17,6 +18,7 @@ import {
   SendHorizontalIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useEffect } from "react";
 
 import { Button } from "@/components/ui/button";
 import { MarkdownText } from "@/components/markdown-text";
@@ -205,6 +207,26 @@ const EditComposer: FC = () => {
 };
 
 const AssistantMessage: FC = () => {
+  useEffect(() => {
+    console.log('AssistantMessage component rendered');
+    
+    setTimeout(() => {
+      const messageElement = document.querySelector('.aui-md');
+      const messageContent = messageElement?.textContent;
+      console.log('Assistant message content from DOM:', messageContent);
+      
+      if (messageContent && !messageContent.includes('The query returned a count of')) {
+        console.log('Message is missing query result, attempting to fix');
+        
+        const queryResultRegex = /The query returned a count of \d+\. Here is the raw result: \d+/;
+        const match = document.body.textContent?.match(queryResultRegex);
+        if (match) {
+          console.log('Found query result in page:', match[0]);
+        }
+      }
+    }, 500);
+  }, []);
+  
   return (
     <MessagePrimitive.Root className="grid grid-cols-[auto_auto_1fr] grid-rows-[auto_1fr] relative w-full max-w-[var(--thread-max-width)] py-4">
       <div className="text-foreground max-w-[calc(var(--thread-max-width)*0.8)] break-words leading-7 col-span-2 col-start-2 row-start-1 my-1.5">

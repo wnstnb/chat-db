@@ -4,6 +4,7 @@ import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { useChatRuntime } from "@assistant-ui/react-ai-sdk";
 import { Thread } from "@/components/thread";
 import { ThreadList } from "@/components/thread-list";
+import { QueryToolUI, WriteQueryToolUI } from "./components/query-tool-ui";
 
 export const Assistant = () => {
   const runtime = useChatRuntime({
@@ -18,7 +19,11 @@ export const Assistant = () => {
           <p className="text-sm text-gray-500 mb-4">Database Assistant</p>
           <ThreadList />
         </div>
-        <Thread />
+        <div className="relative">
+          <Thread />
+          <QueryToolUI />
+          <WriteQueryToolUI />
+        </div>
       </div>
     </AssistantRuntimeProvider>
   );
