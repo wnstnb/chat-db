@@ -16,28 +16,28 @@ const markdownTableToHtml = (markdownTable: string): string => {
   const lines = markdownTable.trim().split('\n');
   if (lines.length < 3) return markdownTable; // Not a proper table
   
-  let html = '<div class="overflow-x-auto"><table class="min-w-full divide-y divide-gray-300 border border-gray-300 rounded">';
+  let html = '<div class="overflow-x-auto"><table class="min-w-full divide-y divide-border border border-border rounded">';
   
   // Process header
   const headerRow = lines[0];
   const headerCells = headerRow.split('|').filter(cell => cell.trim() !== '');
-  html += '<thead class="bg-gray-100"><tr>';
+  html += '<thead class="bg-muted"><tr>';
   headerCells.forEach(cell => {
-    html += `<th class="px-4 py-2 text-left text-sm font-semibold text-gray-900">${cell.trim()}</th>`;
+    html += `<th class="px-4 py-2 text-left text-sm font-semibold text-foreground">${cell.trim()}</th>`;
   });
   html += '</tr></thead>';
   
   // Process body
-  html += '<tbody class="divide-y divide-gray-200">';
+  html += '<tbody class="divide-y divide-border">';
   for (let i = 2; i < lines.length; i++) {
     const row = lines[i];
     const cells = row.split('|').filter(cell => cell.trim() !== '');
-    html += '<tr class="hover:bg-gray-50">';
+    html += '<tr class="hover:bg-muted/50">';
     cells.forEach((cell, index) => {
       // If this is a count column, right-align it
       const isCount = headerCells[index]?.toLowerCase().includes('count');
       const alignment = isCount ? 'text-right' : 'text-left';
-      html += `<td class="px-4 py-2 text-sm text-gray-700 ${alignment}">${cell.trim()}</td>`;
+      html += `<td class="px-4 py-2 text-sm text-foreground ${alignment}">${cell.trim()}</td>`;
     });
     html += '</tr>';
   }
@@ -398,9 +398,9 @@ export const QueryToolUI = makeAssistantToolUI<QueryArgs, QueryResult>({
     
     if (status.type === "running") {
       return (
-        <div className="p-4 bg-gray-100 rounded-md my-2">
-          <p className="font-mono text-sm">Executing query: {args?.sql}</p>
-          <div className="mt-2 animate-pulse">Loading results...</div>
+        <div className="p-4 bg-muted/50 rounded-md my-2 border border-border">
+          <p className="font-mono text-sm text-foreground">Executing query: {args?.sql}</p>
+          <div className="mt-2 animate-pulse text-foreground">Loading results...</div>
         </div>
       );
     }
@@ -410,14 +410,14 @@ export const QueryToolUI = makeAssistantToolUI<QueryArgs, QueryResult>({
     }
     
     return (
-      <div className={`p-4 ${isError ? 'bg-red-50' : 'bg-gray-100'} rounded-md my-2`}>
-        <p className="font-mono text-sm mb-2">Query: {args?.sql}</p>
-        <div className="border-t border-gray-300 pt-2">
-          <div className="prose max-w-none">
+      <div className={`p-4 ${isError ? 'bg-destructive/10' : 'bg-muted/50'} rounded-md my-2 border border-border`}>
+        <p className="font-mono text-sm mb-2 text-foreground">Query: {args?.sql}</p>
+        <div className="border-t border-border pt-2">
+          <div className="prose dark:prose-invert max-w-none">
             {isError ? (
-              <div className="text-red-600">
+              <div className="text-destructive">
                 <p><strong>Error:</strong></p>
-                <pre className="bg-red-50 p-2 rounded">{displayResult}</pre>
+                <pre className="bg-destructive/10 p-2 rounded border border-destructive/20">{displayResult}</pre>
                 <p className="mt-2">Try modifying your query and running it again.</p>
               </div>
             ) : (
@@ -461,13 +461,13 @@ export const WriteQueryToolUI = makeAssistantToolUI<
     
     if (status.type === "running") {
       return (
-        <div className="p-4 bg-gray-100 rounded-md my-2">
-          <p className="font-mono text-sm">
+        <div className="p-4 bg-muted/50 rounded-md my-2 border border-border">
+          <p className="font-mono text-sm text-foreground">
             {args?.confirmed 
               ? `Executing write query: ${args?.sql}` 
               : `Preparing write query: ${args?.sql}`}
           </p>
-          <div className="mt-2 animate-pulse">Loading...</div>
+          <div className="mt-2 animate-pulse text-foreground">Loading...</div>
         </div>
       );
     }
@@ -477,21 +477,21 @@ export const WriteQueryToolUI = makeAssistantToolUI<
     }
 
     return (
-      <div className={`p-4 ${isError ? 'bg-red-50' : 'bg-gray-100'} rounded-md my-2`}>
-        <p className="font-mono text-sm mb-2">
+      <div className={`p-4 ${isError ? 'bg-destructive/10' : 'bg-muted/50'} rounded-md my-2 border border-border`}>
+        <p className="font-mono text-sm mb-2 text-foreground">
           {args?.confirmed 
             ? `Write query: ${args?.sql}` 
             : `Write query preview: ${args?.sql}`}
         </p>
-        <div className="border-t border-gray-300 pt-2">
-          <div className="prose max-w-none">
+        <div className="border-t border-border pt-2">
+          <div className="prose dark:prose-invert max-w-none">
             {isError ? (
-              <div className="text-red-600">
+              <div className="text-destructive">
                 <p><strong>Error:</strong></p>
-                <pre className="bg-red-50 p-2 rounded">{displayResult}</pre>
+                <pre className="bg-destructive/10 p-2 rounded border border-destructive/20">{displayResult}</pre>
               </div>
             ) : (
-              <p>{displayResult}</p>
+              <p className="text-foreground">{displayResult}</p>
             )}
           </div>
         </div>
